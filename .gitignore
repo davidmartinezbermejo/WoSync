@@ -127,3 +127,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+Logs/2020-12-04_WoSync_log.txt
+Logs/2020-12-05_WoSync_log.txt

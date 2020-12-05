@@ -1,10 +1,11 @@
+import sys
 from configparser import ConfigParser
 from filecmp import dircmp
 import time
 import datetime
 import os
 from fnmatch import fnmatch
-from shutil import copyfile
+import shutil
 
 __BOOLEAN__ = ("yes", "no")
 
@@ -27,17 +28,17 @@ __COMPARISSON_TYPE__ = (__COMPARISSON_TYPE_SAME__, __COMPARISSON_TYPE_DIFF__, __
 __ACTION_IGNORE__ = "ignore"
 __ACTION_DELETE_BOTH__ = "deleteBoth"
 __ACTION_DELETE_LEFT__ = "deleteLeft"
-__ACTION_DELETE_RIGHT__ = "deleteRigth"
+__ACTION_DELETE_RIGHT__ = "deleteRight"
 __ACTION_COPY_LEFT_2_RIGHT__ = "copyLeft2Right"
-__ACTION_COPY_RIGHT_2_LEFT__ = "copyRigth2Left"
+__ACTION_COPY_RIGHT_2_LEFT__ = "copyRight2Left"
 __ACTION_MOVE_LEFT_2_RIGHT__ = "moveLeft2Right"
-__ACTION_MOVE_RIGHT_2_LEFT__ = "moveRigth2Left"
+__ACTION_MOVE_RIGHT_2_LEFT__ = "moveRight2Left"
 
 __ACTION_OP__ = (__ACTION_IGNORE__, __ACTION_DELETE_BOTH__, __ACTION_DELETE_LEFT__,
                  __ACTION_DELETE_RIGHT__, __ACTION_COPY_LEFT_2_RIGHT__, __ACTION_COPY_RIGHT_2_LEFT__,
                  __ACTION_MOVE_LEFT_2_RIGHT__, __ACTION_MOVE_RIGHT_2_LEFT__)
 __ACTION_LEFT_OP__ = (__ACTION_IGNORE__, __ACTION_DELETE_LEFT__,
-                      __ACTION_COPY_LEFT_2_RIGHT__, __ACTION_MOVE_RIGHT_2_LEFT__)
+                      __ACTION_COPY_LEFT_2_RIGHT__, __ACTION_MOVE_LEFT_2_RIGHT__)
 __ACTION_RIGHT_OP__ = (__ACTION_IGNORE__, __ACTION_DELETE_RIGHT__,
                        __ACTION_COPY_RIGHT_2_LEFT__, __ACTION_MOVE_RIGHT_2_LEFT__)
 
@@ -61,7 +62,7 @@ __CONFIG_SECTION_SAME_OPERATION__ = "same_operation"
 __CONFIG_SECTION_DIFF_OPERATION__ = "diff_operation"
 __CONFIG_SECTION_FUNNY_OPERATION__ = "funny_operation"
 __CONFIG_SECTION_LEFT_OPERATION__ = "left_operation"
-__CONFIG_SECTION_RIGTH_OPERATION__ = "right_operation"
+__CONFIG_SECTION_RIGHT_OPERATION__ = "right_operation"
 
 __stop_config_error__ = "no"
 __log_level__ = "verbose"
@@ -77,12 +78,14 @@ class Sync:
     _init_process_timestamp = 0
     _end_process_timestamp = 0
     _log = []
+    _files_ignored = 0
     _files_deleted_source1 = 0
     _files_deleted_source2 = 0
     _files_copied2_source1 = 0
     _files_copied2_source2 = 0
     _files_moved2_source1 = 0
     _files_moved2_source2 = 0
+    _files_excluded = 0
     _files_same = 0
     _files_diff = 0
     _files_funny = 0
@@ -262,12 +265,13 @@ class Sync:
                 "ERROR [" + self._name + "]: Config error in right_operation")
 
     def process_operation(self, operation, file, left, right):
-        path_left = left+file
-        path_right = right+file
+        path_left = left+'/'+file
+        path_right = right+'/'+file
 
         error = False
 
         if(operation == __ACTION_IGNORE__):
+            self._files_ignored += 1
             if(operation in self._log_operations):
                 self.log("Executing IGNORE to %s" % (file), [
                     __LOG_LEVEL_ACTION__, __LOG_LEVEL_VERBOSE__])
@@ -275,14 +279,28 @@ class Sync:
 
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_left):
-                    os.remove(path_left)
+                    try:
+                        os.remove(path_left)
+                        self._files_deleted_source1 += 1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing DELETE BOTH: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing DELETE BOTH: %s not found" % (path_left), [
                             __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
                     error = True
                 if os.path.exists(path_right):
-                    os.remove(path_right)
+                    try:
+                        os.remove(path_right)
+                        self._files_deleted_source2 += 1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing DELETE BOTH: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing DELETE BOTH: %s not found" % (path_right), [
@@ -296,7 +314,14 @@ class Sync:
         elif(operation == __ACTION_DELETE_LEFT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_left):
-                    os.remove(path_left)
+                    try:
+                        os.remove(path_left)
+                        self._files_deleted_source1 += 1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing DELETE LEFT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing DELETE LEFT: %s not found" % (path_left), [
@@ -310,7 +335,14 @@ class Sync:
         elif(operation == __ACTION_DELETE_RIGHT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_right):
-                    os.remove(path_right)
+                    try:
+                        os.remove(path_right)
+                        self._files_deleted_source2 += 1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing DELETE RIGHT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing DELETE RIGHT: %s not found" % (path_right), [
@@ -324,7 +356,14 @@ class Sync:
         elif(operation == __ACTION_COPY_LEFT_2_RIGHT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_left):
-                    shutil.copy2(path_left, path_right)
+                    try:
+                        shutil.copy2(path_left, path_right)
+                        self._files_copied2_source2+=1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing COPY LEFT TO RIGHT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing COPY LEFT TO RIGHT: %s not found" % (path_left), [
@@ -338,7 +377,14 @@ class Sync:
         elif(operation == __ACTION_COPY_RIGHT_2_LEFT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_right):
-                    shutil.copy2(path_right, path_left)
+                    try:
+                        shutil.copy2(path_right, path_left)
+                        self._files_copied2_source1+=1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing COPY RIGHT TO LEFT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing COPY RIGHT TO LEFT: %s not found" % (path_right), [
@@ -352,8 +398,15 @@ class Sync:
         elif(operation == __ACTION_MOVE_LEFT_2_RIGHT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_left):
-                    shutil.copy2(path_left, path_right)
-                    os.remove(path_left)
+                    try:
+                        shutil.copy2(path_left, path_right)
+                        os.remove(path_left)
+                        self._files_moved2_source2+=1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Error executing MOVE LEFT TO RIGHT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                        error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing MOVE LEFT TO RIGHT: %s not found" % (path_left), [
@@ -367,8 +420,15 @@ class Sync:
         elif(operation == __ACTION_MOVE_RIGHT_2_LEFT__):
             if(self._simulate_operations != "yes"):
                 if os.path.exists(path_right):
-                    shutil.copy2(path_right, path_left)
-                    os.remove(path_right)
+                    try:
+                        shutil.copy2(path_right, path_left)
+                        os.remove(path_right)
+                        self._files_moved2_source1+=1
+                    except IOError as e:
+                        if(operation in self._log_operations):
+                            self.log("Exception executing MOVE RIGHT TO LEFT: %s" % (e), [
+                                __LOG_LEVEL_ERROR__, __LOG_LEVEL_VERBOSE__])
+                            error = True
                 else:
                     if(operation in self._log_operations):
                         self.log("Error executing MOVE RIGHT TO LEFT: %s not found" % (path_right), [
@@ -380,7 +440,7 @@ class Sync:
                     self.log("Executing MOVE RIGHT TO LEFT to %s and %s" % (path_right, path_left), [
                         __LOG_LEVEL_ACTION__, __LOG_LEVEL_VERBOSE__])
 
-    def process_file(self, comparisson_type, file, left, rigth):
+    def process_file(self, comparisson_type, file, left, right):
         # filtramos por los patrones
         file_excluded = False
         if(self._include_patterns != ""):
@@ -398,6 +458,7 @@ class Sync:
         if(file_excluded):
             self.log("File %s categorized as %s is EXCLUDED from processing" %
                      (file, comparisson_text), __LOG_LEVEL_VERBOSE__)
+            self._files_excluded+=1
         else:
             operation = __ACTION_IGNORE__
             if(comparisson_type == __COMPARISSON_TYPE_SAME__):
@@ -415,7 +476,7 @@ class Sync:
                 self.log("Processing file %s categorized as %s" %
                          (file, comparisson_type), __LOG_LEVEL_VERBOSE__)
 
-            self.process_operation(operation, file, left, rigth)
+            self.process_operation(operation, file, left, right)
 
     def process_dcmp(self, dcmp):
         for file in dcmp.same_files:
@@ -467,6 +528,10 @@ class Sync:
         processed_files = self._files_same + self._files_diff + \
             self._files_funny + self._files_left + self._files_right
         self.log("Total files processed: %d" % (processed_files), [
+            __LOG_LEVEL_ACTION__, __LOG_LEVEL_VERBOSE__])
+        self.log("Total files ignored: %d" % (self._files_ignored), [
+            __LOG_LEVEL_ACTION__, __LOG_LEVEL_VERBOSE__])
+        self.log("Total files excluded: %d" % (self._files_excluded), [
             __LOG_LEVEL_ACTION__, __LOG_LEVEL_VERBOSE__])
         self.log("Total files processed in %s: %d deleted, %d copied and %d moved" %
                  (self._source1, self._files_deleted_source1, self._files_copied2_source1,
@@ -560,8 +625,10 @@ def read_config():
                         config_object[config_section][__CONFIG_SECTION_RECURSIVE__],
                         config_object[config_section][__CONFIG_SECTION_ONLY_FILES__],
                         config_object[config_section][__CONFIG_SECTION_LOG_LEVEL__],
-                        config_object[config_section][__CONFIG_SECTION_LOG_OPERATIONS__].split('|'),
-                        config_object[config_section][__CONFIG_SECTION_LOG_COMPARISSON__].split('|'),
+                        config_object[config_section][__CONFIG_SECTION_LOG_OPERATIONS__].split(
+                            '|'),
+                        config_object[config_section][__CONFIG_SECTION_LOG_COMPARISSON__].split(
+                            '|'),
                         config_object[config_section][__CONFIG_SECTION_INCLUDE_PATTERNS__],
                         config_object[config_section][__CONFIG_SECTION_EXCLUDE_PATTENRS__],
                         config_object[config_section][__CONFIG_SECTION_SIMULATE_OPERATIONS__],
@@ -569,7 +636,7 @@ def read_config():
                         config_object[config_section][__CONFIG_SECTION_DIFF_OPERATION__],
                         config_object[config_section][__CONFIG_SECTION_FUNNY_OPERATION__],
                         config_object[config_section][__CONFIG_SECTION_LEFT_OPERATION__],
-                        config_object[config_section][__CONFIG_SECTION_RIGTH_OPERATION__])
+                        config_object[config_section][__CONFIG_SECTION_RIGHT_OPERATION__])
             if(sync._error == True):
                 retcode = -1
                 __config_errors__.append(sync._error_text)
